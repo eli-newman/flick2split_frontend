@@ -44,7 +44,7 @@
       "eas": {
         "projectId": "2e08b1c1-88ec-42f7-8e90-abb56a426de5"
       },
-      "EXPO_PUBLIC_BACKEND_URL": "https://flick2split-backend.onrender.com"
+      "EXPO_PUBLIC_BACKEND_URL": "https://flick2split-backend-777817822240.us-central1.run.app"
     },
     "runtimeVersion": {
       "policy": "sdkVersion"

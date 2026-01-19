@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native';
 
 
 const { width } = Dimensions.get('window');
-const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://flick2split-backend.onrender.com';
+const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://flick2splitbackend-777817822240.europe-west1.run.app';
 
 /**
  * Main app component for bill splitting application

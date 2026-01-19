@@ -19,7 +19,7 @@ export const useCurrencyConverter = (initialCurrencyCode = null) => {
     }
     
     try {
-      const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://flick2split-backend.onrender.com';
+      const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://flick2splitbackend-777817822240.europe-west1.run.app';
       const response = await fetch(`${API_URL}/exchange_rate?from_currency=${fromCurrency}&to_currency=${toCurrency}`);
       const json = await response.json();
       if (json.error) {
