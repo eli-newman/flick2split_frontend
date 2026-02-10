@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TextInput, 
-  TouchableOpacity, 
-  FlatList, 
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
   Modal,
   ScrollView,
   Alert,
@@ -20,6 +20,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useCurrencyConverter, CurrencyConverterButton, CurrencyConverterModal } from "./CurrencyConverter";
 import { currencies } from './utils/currencies';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from './config/AuthContext';
 
 // Import custom components
 import Header from './split_components/Header';
@@ -41,6 +43,7 @@ import {
 export default function SplitBill() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const { userProfile } = useAuth();
   
   // Parse the bill data from params
   const [billData, setBillData] = useState(params.billData ? JSON.parse(params.billData) : null);
@@ -59,6 +62,9 @@ export default function SplitBill() {
   const [splitCount, setSplitCount] = useState('2');
   const [helpVisible, setHelpVisible] = useState(false);
   
+  // Track whether state was restored from AsyncStorage
+  const restoredRef = useRef(false);
+
   // Add animation values
   const celebrationScale = useRef(new Animated.Value(0)).current;
   const celebrationOpacity = useRef(new Animated.Value(0)).current;
@@ -89,19 +95,86 @@ export default function SplitBill() {
   const toggleHelp = () => {
     setHelpVisible(!helpVisible);
   };
-  
+
+  // Save split progress to AsyncStorage whenever it changes
+  const saveSplitProgress = useCallback(async (guests, available, selected, nameInput, name) => {
+    try {
+      await AsyncStorage.setItem('splitProgress', JSON.stringify({
+        previousGuests: guests,
+        availableItems: available,
+        selectedItems: selected,
+        showNameInput: nameInput,
+        guestName: name,
+        billDataKey: JSON.stringify(billData?.items),
+      }));
+    } catch (e) {
+      // silent fail
+    }
+  }, [billData]);
+
+  // Restore split progress on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem('splitProgress');
+        if (saved && billData) {
+          const progress = JSON.parse(saved);
+          // Only restore if it's the same bill
+          if (progress.billDataKey === JSON.stringify(billData.items) && progress.previousGuests?.length > 0) {
+            restoredRef.current = true;
+            setPreviousGuests(progress.previousGuests);
+            setAvailableItems(progress.availableItems);
+            setSelectedItems(progress.selectedItems);
+            setShowNameInput(progress.showNameInput);
+            setGuestName(progress.guestName || '');
+          }
+        }
+      } catch (e) {
+        // silent fail, will initialize normally
+      }
+    })();
+  }, []);
+
+  // Save progress whenever guests change
+  useEffect(() => {
+    if (previousGuests.length > 0) {
+      saveSplitProgress(previousGuests, availableItems, selectedItems, showNameInput, guestName);
+    }
+  }, [previousGuests, availableItems, selectedItems, showNameInput, guestName]);
+
+  // Clear saved progress when split is complete (all items assigned)
+  useEffect(() => {
+    if (availableItems.length === 0 && previousGuests.length > 0) {
+      AsyncStorage.removeItem('splitProgress');
+    }
+  }, [availableItems.length, previousGuests.length]);
+
   // Initialize available items from bill data and recalculate subtotal
   useEffect(() => {
     if (billData) {
+      // Skip initialization if state was restored from AsyncStorage
+      if (restoredRef.current) {
+        restoredRef.current = false; // Reset so future billData changes work
+        // Still recalculate subtotal if needed
+        const recalculatedSubtotal = billData.items.reduce((sum, item) => sum + item.price, 0);
+        if (billData.subtotal !== recalculatedSubtotal) {
+          setBillData(prev => ({
+            ...prev,
+            subtotal: recalculatedSubtotal
+          }));
+        }
+        return;
+      }
+
       // Create expanded items array based on quantities
       let expandedItems = [];
       let recalculatedSubtotal = 0;
-      
+
       billData.items.forEach((item, index) => {
         const quantity = parseInt(item.quantity) || 1;
         const pricePerItem = item.price / quantity;
         recalculatedSubtotal += item.price;
-        
+
         for (let i = 0; i < quantity; i++) {
           expandedItems.push({
             ...item,
@@ -115,10 +188,10 @@ export default function SplitBill() {
           });
         }
       });
-      
+
       // Update available items without triggering a re-render of billData
       setAvailableItems(expandedItems);
-      
+
       // Only update billData if subtotal has changed
       if (billData.subtotal !== recalculatedSubtotal) {
         setBillData(prev => ({
@@ -266,12 +339,13 @@ export default function SplitBill() {
   // Format guest details for sharing
   const handleShare = async () => {
     await shareDetails(
-      previousGuests, 
-      billData, 
-      targetCurrency, 
-      originalCurrency, 
-      exchangeRate, 
-      Share
+      previousGuests,
+      billData,
+      targetCurrency,
+      originalCurrency,
+      exchangeRate,
+      Share,
+      userProfile?.venmoUsername
     );
   };
   

@@ -7,10 +7,12 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useCurrencyConverter, CurrencyConverterButton, CurrencyConverterModal } from "./CurrencyConverter";
 import { currencies } from './utils/currencies';
 import SplitEvenlyBillSummary from './split_components/SplitEvenlyBillSummary';
+import { useAuth } from './config/AuthContext';
 
 export default function SplitEvenly() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const { userProfile } = useAuth();
   const billData = params.billData ? JSON.parse(params.billData) : null;
   
   const [numPeople, setNumPeople] = useState('2');
@@ -80,37 +82,36 @@ export default function SplitEvenly() {
     
     let conversionInfo = '';
     if (isConverted) {
-      conversionInfo = `\n\n🌍 Converted from ${originalCurrency} to ${targetCurrency}\n` +
-                       `📈 Exchange rate: 1 ${originalCurrency} = ${exchangeRate.toFixed(4)} ${targetCurrency}\n` +
-                       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      conversionInfo = `\nCURRENCY CONVERSION\n` +
+                       `------------------------------\n` +
+                       `${originalCurrency} to ${targetCurrency} @ ${exchangeRate.toFixed(4)}\n`;
     }
-    
+
     // Format per-person amount with correct currency symbol or code
     const formattedPerPersonAmount = isConverted
       ? `${getCurrencySymbol(targetCurrency)}${formatAmount(perPersonAmount * exchangeRate)}`
       : `${formatAmount(perPersonAmount)}`;
-      
+
     // Format total with correct currency representation
     const formattedTotal = isConverted
       ? `${formatAmount(totalValue)} (${getCurrencySymbol(targetCurrency)}${formatAmount(totalValue * exchangeRate)})`
       : formatAmount(totalValue);
-    
+
     // Currency code to display when not converting
     const currencyCode = !isConverted && originalCurrency ? ` ${originalCurrency}` : '';
-    
-    return `💸💸💸 PAYMENT REQUEST 💸💸💸\n\n` +
-           `You guys all owe me ${formattedPerPersonAmount}${currencyCode} each for our meal.\n` +
-           `📋 Bill Details:\n` +
-           `────────────────────────────\n` +
-           `🍽️ Subtotal: ${formatAmount(subtotalValue)}\n` +
-           `🏛️ Tax: ${formatAmount(taxValue)}\n` +
-           `👑 Tip: ${formatAmount(tipValue)}\n` +
-           `💯 Total: ${formattedTotal}${currencyCode}` +
+
+    return `PAYMENT REQUEST\n\n` +
+           `You guys all owe me ${formattedPerPersonAmount}${currencyCode} each for our meal.\n\n` +
+           `Bill Details:\n` +
+           `------------------------------\n` +
+           `Subtotal: ${formatAmount(subtotalValue)}\n` +
+           `Tax: ${formatAmount(taxValue)}\n` +
+           `Tip: ${formatAmount(tipValue)}\n` +
+           `Total: ${formattedTotal}${currencyCode}\n` +
            `${conversionInfo}\n` +
-           `👥 Split between ${numPeople} people\n` +
-           `💳 Please Venmo or pay me in cash!\n\n` +
-           `🚀 Sent via Flick2Split\n` +
-           `✨ Hassle-free bill splitting app✨`;
+           `Split between ${numPeople} people\n` +
+           (userProfile?.venmoUsername ? `Pay me on Venmo: https://venmo.com/u/${userProfile.venmoUsername}\n\n` : `Please Venmo or pay in cash!\n\n`) +
+           `Sent via Flick2Split`;
   };
   
   // Share bill details

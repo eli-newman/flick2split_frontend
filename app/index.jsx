@@ -2,17 +2,19 @@ import { Text, View, TouchableOpacity, StyleSheet, Image, Alert, Dimensions, Act
 import { useState, useEffect, useRef } from "react";
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { useRouter } from 'expo-router';
 import { Platform } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from './config/firebase';
+import { useAuth } from './config/AuthContext';
 
 
 const { width } = Dimensions.get('window');
-const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://flick2splitbackend-777817822240.europe-west1.run.app';
 
 /**
  * Main app component for bill splitting application
@@ -26,6 +28,7 @@ export default function Index() {
   const [errorVisible, setErrorVisible] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const router = useRouter();
+  const { userProfile } = useAuth();
   
   // Animation values
   const circle1Animation = useRef(new Animated.Value(0)).current;
@@ -289,35 +292,29 @@ export default function Index() {
    */
   const handleContinue = async () => {
     if (!image) return;
+
+    // Client-side scan limit check — redirect to paywall if exceeded
+    if (userProfile && !userProfile.isPremium) {
+      const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+      const count = userProfile.scanResetDate === currentMonth ? (userProfile.scanCount || 0) : 0;
+      if (count >= 3) {
+        router.push('/paywall');
+        return;
+      }
+    }
+
     setButtonState("processing");
-    
+
     try {
       // Convert compressed image to base64
       const base64Image = await FileSystem.readAsStringAsync(image, {
         encoding: FileSystem.EncodingType.Base64,
       });
 
-      console.log("Attempting to fetch from:", API_URL);
-      
-      // Add timeout for fetch to avoid hanging indefinitely
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-      
-      // Send to server
-      const response = await fetch(`${API_URL}/process-bill`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64Image }),
-        signal: controller.signal
-      });
-      
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`Server responded with status: ${response.status}`);
-      }
-
-      const data = JSON.parse(await response.text());
+      // Call Firebase Cloud Function
+      const processBill = httpsCallable(functions, 'process_bill');
+      const result = await processBill({ image: base64Image });
+      const data = result.data;
 
       // Validate response data
       if (!data.bill?.items || !data.bill?.subtotal || isNaN(data.bill.subtotal) || data.bill.subtotal === 0) {
@@ -329,26 +326,36 @@ export default function Index() {
         pathname: '/results',
         params: { bill: JSON.stringify(data.bill) }
       });
-      
+
       setButtonState("idle");
     } catch (error) {
       console.error('Error:', error);
-      
-      // Detailed error handling for different error types
+
       let message;
-      
-      if (error.name === 'AbortError') {
-        message = "Connection timed out. Please check your internet connection and try again.";
-        Alert.alert("Connection Timeout", message, [{ text: "OK" }]);
-      } else if (error.message.includes('Network request failed')) {
-        message = "Unable to connect to the server. Please check your internet connection and try again.";
-        Alert.alert("Connection Error", message, [{ text: "OK" }]);
+
+      if (error.code === 'functions/resource-exhausted') {
+        // Scan limit hit server-side
+        router.push('/paywall');
+        setButtonState("idle");
+        return;
+      } else if (
+        error.message?.includes('network') ||
+        error.message?.includes('Network') ||
+        error.message?.includes('fetch') ||
+        error.code === 'unavailable' ||
+        error.code === 'functions/unavailable'
+      ) {
+        Alert.alert(
+          "No Internet Connection",
+          "Scanning a receipt requires internet access. Please check your Wi-Fi or cellular connection and try again.\n\nYou can still use \"Enter Manually\" to split a bill offline.",
+          [{ text: "OK" }]
+        );
       } else {
         message = "We couldn't read your receipt correctly.";
         setErrorMessage(message);
         setErrorVisible(true);
       }
-      
+
       setButtonState("error");
       setTimeout(() => setButtonState("idle"), 2000);
     }
@@ -415,9 +422,17 @@ export default function Index() {
             <Text style={styles.tagline}>The best way to split with friends</Text>
           </View>
 
-          <TouchableOpacity 
+          <TouchableOpacity
+            style={styles.settingsButton}
+            onPress={() => router.push('/settings')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="settings-outline" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
             style={styles.helpButton}
-            onPress={toggleHelp}z
+            onPress={toggleHelp}
             activeOpacity={0.7}
           >
             <Ionicons name="help-circle" size={28} color="#FFFFFF" />
@@ -591,6 +606,19 @@ export default function Index() {
                 </TouchableOpacity>
                 
                 <Text style={styles.instructions}>Snap a photo of your bill or upload one</Text>
+
+                {userProfile && !userProfile.isPremium && (
+                  <View style={styles.scanCounter}>
+                    <Ionicons name="scan-outline" size={14} color="rgba(255,255,255,0.85)" />
+                    <Text style={styles.scanCounterText}>
+                      {(() => {
+                        const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+                        const count = userProfile.scanResetDate === currentMonth ? (userProfile.scanCount || 0) : 0;
+                        return `${count}/3 free scans this month`;
+                      })()}
+                    </Text>
+                  </View>
+                )}
                 
                 <TouchableOpacity
                   style={styles.manualInputButton}
@@ -925,6 +953,24 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 15,
   },
+  scanCounter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  scanCounterText: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 13,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
   manualInputButton: {
     paddingVertical: 12,
     paddingHorizontal: 10,
@@ -947,6 +993,18 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: '600',
     fontSize: 13,
+  },
+  settingsButton: {
+    position: 'absolute',
+    top: 20,
+    left: 15,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
   },
   helpButton: {
     position: 'absolute',

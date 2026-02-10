@@ -27,97 +27,92 @@ export const calculateSubtotal = (items) => {
 };
 
 // Format guest details for sharing
-export const formatGuestDetailsForSharing = (previousGuests, billData, targetCurrency, originalCurrency, exchangeRate) => {
+export const formatGuestDetailsForSharing = (previousGuests, billData, targetCurrency, originalCurrency, exchangeRate, venmoUsername) => {
   if (!previousGuests || previousGuests.length === 0) {
     return "No guests have been added yet.";
   }
-  
-  let message = "💸💸💸 BILL SPLIT SUMMARY 💸💸💸\n\n";
-  
+
+  let message = "BILL SPLIT SUMMARY\n\n";
+
   // Calculate total bill amount
   const totalBillAmount = previousGuests.reduce((sum, guest) => sum + guest.total, 0);
-  
+
   // Check if currency conversion is active
   const isConverted = targetCurrency && targetCurrency !== originalCurrency;
-  
+
   // Add quick summary of all guests first
-  message += "👥 PAYMENT REQUESTS 👥\n";
-  message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
-  
+  message += "PAYMENT REQUESTS\n";
+  message += "------------------------------\n\n";
+
   previousGuests.forEach(guest => {
     if (isConverted) {
       const convertedTotal = guest.total * exchangeRate;
-      message += `${guest.name} owes ${formatCurrencyAmountForSharing(convertedTotal, targetCurrency, originalCurrency, billData)} 💰\n`;
+      message += `${guest.name} owes ${formatCurrencyAmountForSharing(convertedTotal, targetCurrency, originalCurrency, billData)}\n`;
     } else {
-      message += `${guest.name} owes ${formatCurrencyAmountForSharing(guest.total, targetCurrency, originalCurrency, billData)} 💰\n`;
+      message += `${guest.name} owes ${formatCurrencyAmountForSharing(guest.total, targetCurrency, originalCurrency, billData)}\n`;
     }
   });
-  
+
   // Add total bill information
-  message += "\n📋 BILL DETAILS 📋\n";
-  message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-  
+  message += "\nBILL DETAILS\n";
+  message += "------------------------------\n";
+
   // Original currency values
   const originalSymbol = getCurrencySymbol(originalCurrency);
-  
+
   if (isConverted) {
-    // Show both original and converted totals
-    message += `🧾 Subtotal: ${originalSymbol}${billData.subtotal.toFixed(2)} (${formatCurrencyAmountForSharing(billData.subtotal * exchangeRate, targetCurrency, originalCurrency, billData)})\n`;
-    message += `🏛️ Tax: ${originalSymbol}${billData.tax.toFixed(2)} (${formatCurrencyAmountForSharing(billData.tax * exchangeRate, targetCurrency, originalCurrency, billData)})\n`;
-    message += `💁 Tip: ${originalSymbol}${billData.tip.toFixed(2)} (${formatCurrencyAmountForSharing(billData.tip * exchangeRate, targetCurrency, originalCurrency, billData)})\n`;
-    message += `💯 Total: ${originalSymbol}${totalBillAmount.toFixed(2)} (${formatCurrencyAmountForSharing(totalBillAmount * exchangeRate, targetCurrency, originalCurrency, billData)})\n`;
+    message += `Subtotal: ${originalSymbol}${billData.subtotal.toFixed(2)} (${formatCurrencyAmountForSharing(billData.subtotal * exchangeRate, targetCurrency, originalCurrency, billData)})\n`;
+    message += `Tax: ${originalSymbol}${billData.tax.toFixed(2)} (${formatCurrencyAmountForSharing(billData.tax * exchangeRate, targetCurrency, originalCurrency, billData)})\n`;
+    message += `Tip: ${originalSymbol}${billData.tip.toFixed(2)} (${formatCurrencyAmountForSharing(billData.tip * exchangeRate, targetCurrency, originalCurrency, billData)})\n`;
+    message += `Total: ${originalSymbol}${totalBillAmount.toFixed(2)} (${formatCurrencyAmountForSharing(totalBillAmount * exchangeRate, targetCurrency, originalCurrency, billData)})\n`;
   } else {
-    message += `🧾 Subtotal: ${formatCurrencyAmountForSharing(billData.subtotal, targetCurrency, originalCurrency, billData)}\n`;
-    message += `🏛️ Tax: ${formatCurrencyAmountForSharing(billData.tax, targetCurrency, originalCurrency, billData)}\n`;
-    message += `💁 Tip: ${formatCurrencyAmountForSharing(billData.tip, targetCurrency, originalCurrency, billData)}\n`;
-    message += `💯 Total: ${formatCurrencyAmountForSharing(totalBillAmount, targetCurrency, originalCurrency, billData)}\n`;
+    message += `Subtotal: ${formatCurrencyAmountForSharing(billData.subtotal, targetCurrency, originalCurrency, billData)}\n`;
+    message += `Tax: ${formatCurrencyAmountForSharing(billData.tax, targetCurrency, originalCurrency, billData)}\n`;
+    message += `Tip: ${formatCurrencyAmountForSharing(billData.tip, targetCurrency, originalCurrency, billData)}\n`;
+    message += `Total: ${formatCurrencyAmountForSharing(totalBillAmount, targetCurrency, originalCurrency, billData)}\n`;
   }
-  
-  message += `👥 Split between ${previousGuests.length} people\n\n`;
-  
+
+  message += `Split between ${previousGuests.length} people\n\n`;
+
   // Add conversion info if applicable
   if (isConverted) {
-    message += `🌍 CURRENCY CONVERSION 🌍\n`;
-    message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-    message += `${originalCurrency} → ${targetCurrency} @ ${exchangeRate.toFixed(4)}\n\n`;
+    message += `CURRENCY CONVERSION\n`;
+    message += "------------------------------\n";
+    message += `${originalCurrency} to ${targetCurrency} @ ${exchangeRate.toFixed(4)}\n\n`;
   }
-  
+
   // Add detailed breakdown
-  message += "📊 DETAILED BREAKDOWN 📊\n";
-  message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
-  
+  message += "DETAILED BREAKDOWN\n";
+  message += "------------------------------\n\n";
+
   previousGuests.forEach(guest => {
-    // Always show original prices for items and subtotals
     if (isConverted) {
       const convertedTotal = guest.total * exchangeRate;
-      message += `👤 ${guest.name}'s TOTAL: ${formatCurrencyAmountForSharing(convertedTotal, targetCurrency, originalCurrency, billData)}\n`;
+      message += `${guest.name}'s TOTAL: ${formatCurrencyAmountForSharing(convertedTotal, targetCurrency, originalCurrency, billData)}\n`;
     } else {
-      message += `👤 ${guest.name}'s TOTAL: ${formatCurrencyAmountForSharing(guest.total, targetCurrency, originalCurrency, billData)}\n`;
+      message += `${guest.name}'s TOTAL: ${formatCurrencyAmountForSharing(guest.total, targetCurrency, originalCurrency, billData)}\n`;
     }
-    
-    message += "   ITEMS:\n";
+
+    message += "   Items:\n";
     guest.items.forEach(item => {
-      // Show original item prices (no conversion)
-      message += `   • ${item.name}: ${originalSymbol}${item.price.toFixed(2)}\n`;
+      message += `   - ${item.name}: ${originalSymbol}${item.price.toFixed(2)}\n`;
     });
-    
-    message += `   📝 Subtotal: ${originalSymbol}${guest.subtotal.toFixed(2)}\n`;
-    message += `   🏛️ Tax: ${originalSymbol}${guest.tax.toFixed(2)}\n`;
-    message += `   💁 Tip: ${originalSymbol}${guest.tip.toFixed(2)}\n`;
-    
-    // If conversion is active, show both original and converted totals
+
+    message += `   Subtotal: ${originalSymbol}${guest.subtotal.toFixed(2)}\n`;
+    message += `   Tax: ${originalSymbol}${guest.tax.toFixed(2)}\n`;
+    message += `   Tip: ${originalSymbol}${guest.tip.toFixed(2)}\n`;
+
     if (isConverted) {
-      message += `   💰 Original Total: ${originalSymbol}${guest.total.toFixed(2)}\n`;
-      message += `   💱 Converted Total: ${formatCurrencyAmountForSharing(guest.total * exchangeRate, targetCurrency, originalCurrency, billData)}\n\n`;
+      message += `   Original Total: ${originalSymbol}${guest.total.toFixed(2)}\n`;
+      message += `   Converted Total: ${formatCurrencyAmountForSharing(guest.total * exchangeRate, targetCurrency, originalCurrency, billData)}\n\n`;
     } else {
-      message += `   💰 Total: ${formatCurrencyAmountForSharing(guest.total, targetCurrency, originalCurrency, billData)}\n\n`;
+      message += `   Total: ${formatCurrencyAmountForSharing(guest.total, targetCurrency, originalCurrency, billData)}\n\n`;
     }
   });
-  
-  message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-  message += "💳 Please Venmo or pay in cash!\n";
-  message += "🚀 Sent via Flick2Split\n";
-  message += "✨ Hassle-free bill splitting ✨";
+
+  message += "------------------------------\n";
+  message += venmoUsername ? `Pay me on Venmo: https://venmo.com/u/${venmoUsername}\n` : "Please Venmo or pay in cash!\n";
+  message += "Sent via Flick2Split";
 
   return message;
 };
@@ -132,14 +127,14 @@ const formatCurrencyAmountForSharing = (amount, targetCurrency, originalCurrency
 };
 
 // Handle share button press
-export const handleShare = async (previousGuests, billData, targetCurrency, originalCurrency, exchangeRate, Share) => {
+export const handleShare = async (previousGuests, billData, targetCurrency, originalCurrency, exchangeRate, Share, venmoUsername) => {
   try {
     if (!previousGuests || previousGuests.length === 0) {
       Alert.alert('No Data', 'There are no guests to share information about.');
       return;
     }
-    
-    const message = formatGuestDetailsForSharing(previousGuests, billData, targetCurrency, originalCurrency, exchangeRate);
+
+    const message = formatGuestDetailsForSharing(previousGuests, billData, targetCurrency, originalCurrency, exchangeRate, venmoUsername);
     await Share.share({
       message: message,
       title: 'Bill Split Details'
@@ -157,4 +152,4 @@ export default {
   calculateSubtotal,
   formatGuestDetailsForSharing,
   handleShare
-}; 
+};
