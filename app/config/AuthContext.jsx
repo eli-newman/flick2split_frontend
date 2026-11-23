@@ -1,9 +1,14 @@
 import { createContext, useContext, useState, useEffect } from 'react';
-import { onAuthStateChanged } from 'firebase/auth';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from './firebase';
 
 const AuthContext = createContext(null);
+
+const currentMonth = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -12,10 +17,16 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser);
-      if (!firebaseUser) {
-        setUserProfile(null);
-        setLoading(false);
+      if (firebaseUser) {
+        setUser(firebaseUser);
+      } else {
+        // Auto sign-in anonymously so users can use the app without creating an account
+        signInAnonymously(auth).catch((e) => {
+          console.error('Anonymous sign-in failed:', e);
+          setUser(null);
+          setUserProfile(null);
+          setLoading(false);
+        });
       }
     });
     return unsubscribeAuth;
@@ -27,13 +38,32 @@ export function AuthProvider({ children }) {
 
     const unsubscribeProfile = onSnapshot(
       doc(db, 'users', user.uid),
-      (snapshot) => {
+      async (snapshot) => {
         if (snapshot.exists()) {
           setUserProfile(snapshot.data());
+          setLoading(false);
+        } else if (user.isAnonymous) {
+          // Auto-create a minimal profile for anonymous users so Cloud Functions
+          // can find the user document before the first scan
+          try {
+            await setDoc(doc(db, 'users', user.uid), {
+              isAnonymous: true,
+              isPremium: false,
+              scanCount: 0,
+              scanResetDate: currentMonth(),
+              scanCredits: 0,
+              freeScansUsed: 0,
+              createdAt: serverTimestamp(),
+            });
+            // onSnapshot fires again once the doc is created
+          } catch (e) {
+            console.error('Failed to create anonymous user profile:', e);
+            setLoading(false);
+          }
         } else {
           setUserProfile(null);
+          setLoading(false);
         }
-        setLoading(false);
       },
       (error) => {
         console.error('Error listening to user profile:', error);

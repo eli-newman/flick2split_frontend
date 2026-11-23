@@ -1,5 +1,5 @@
 import { Text, View, StyleSheet, TextInput, TouchableOpacity, ScrollView, KeyboardAvoidingView, Platform, Alert, Share, SafeAreaView } from "react-native";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { StatusBar } from 'expo-status-bar';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -8,12 +8,31 @@ import { useCurrencyConverter, CurrencyConverterButton, CurrencyConverterModal }
 import { currencies } from './utils/currencies';
 import SplitEvenlyBillSummary from './split_components/SplitEvenlyBillSummary';
 import { useAuth } from './config/AuthContext';
+import { useRequireAuth } from './auth/SignUpSheetContext';
+import { maybePromptForReview } from './utils/reviewPrompt';
+import { logEvent } from './utils/analytics';
 
 export default function SplitEvenly() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { userProfile } = useAuth();
-  const billData = params.billData ? JSON.parse(params.billData) : null;
+  const { user, userProfile } = useAuth();
+
+  // Parse bill data defensively — malformed params shouldn't crash the route
+  let billData = null;
+  let billDataParseFailed = false;
+  try {
+    billData = params.billData ? JSON.parse(params.billData) : null;
+  } catch (_e) {
+    billData = null;
+    billDataParseFailed = true;
+  }
+
+  useEffect(() => {
+    if (billDataParseFailed) {
+      Alert.alert("Bill data couldn't be loaded.");
+      router.replace('/');
+    }
+  }, [billDataParseFailed, router]);
   
   const [numPeople, setNumPeople] = useState('2');
   
@@ -115,18 +134,37 @@ export default function SplitEvenly() {
   };
   
   // Share bill details
-  const handleShare = async () => {
-    try {
-      const message = formatDetailsForSharing();
-      
-      await Share.share({
-        message: message,
-        title: Platform.OS === 'android' ? `Payment Request: ${formatBillCurrency(perPersonAmount)} per person` : undefined
-      });
-    } catch (error) {
-      console.error('Share error:', error);
-      Alert.alert('Error', 'Failed to share bill details');
-    }
+  const requireAuth = useRequireAuth();
+  const handleShare = () => {
+    requireAuth(
+      async () => {
+        try {
+          const message = formatDetailsForSharing();
+
+          const result = await Share.share({
+            message: message,
+            title: Platform.OS === 'android' ? `Payment Request: ${formatBillCurrency(perPersonAmount)} per person` : undefined
+          });
+
+          if (result.action === Share.sharedAction) {
+            logEvent(user?.uid, 'split_completed', {
+              mode: 'evenly',
+              guest_count: parseInt(numPeople) || 1,
+              total_amount: totalValue,
+            });
+            maybePromptForReview();
+          }
+        } catch (error) {
+          console.error('Share error:', error);
+          Alert.alert('Error', 'Failed to share bill details');
+        }
+      },
+      {
+        surface: 'post_split_share',
+        title: 'Share this split with your friends',
+        subtitle: 'Sign up to send everyone their share and keep this split in your history.',
+      },
+    );
   };
   
   // Add reset handler function

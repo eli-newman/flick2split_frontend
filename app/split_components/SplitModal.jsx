@@ -1,7 +1,50 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Modal, StyleSheet } from 'react-native';
 
+const MAX_SPLIT_COUNT = 50;
+
 const SplitModal = ({ visible, onClose, splitCount, setSplitCount, onConfirm }) => {
+  const [splitError, setSplitError] = useState('');
+
+  // Reset error each time the modal is reopened
+  useEffect(() => {
+    if (visible) {
+      setSplitError('');
+    }
+  }, [visible]);
+
+  const handleChange = (text) => {
+    if (splitError) setSplitError('');
+    setSplitCount(text);
+  };
+
+  const handleConfirm = () => {
+    const raw = (splitCount ?? '').toString().trim();
+    if (raw === '') {
+      setSplitError('Enter a number');
+      return;
+    }
+
+    // Reject non-integer input (e.g. "2.5", "abc")
+    if (!/^\d+$/.test(raw)) {
+      setSplitError('Enter a whole number');
+      return;
+    }
+
+    const parsed = parseInt(raw, 10);
+    if (Number.isNaN(parsed) || parsed < 1) {
+      setSplitError('Must be at least 1');
+      return;
+    }
+    if (parsed > MAX_SPLIT_COUNT) {
+      setSplitError(`Maximum is ${MAX_SPLIT_COUNT}`);
+      return;
+    }
+
+    setSplitError('');
+    onConfirm();
+  };
+
   return (
     <Modal
       visible={visible}
@@ -15,20 +58,23 @@ const SplitModal = ({ visible, onClose, splitCount, setSplitCount, onConfirm }) 
           <TextInput
             style={styles.splitInput}
             value={splitCount}
-            onChangeText={setSplitCount}
+            onChangeText={handleChange}
             keyboardType="numeric"
             autoFocus
           />
+          {splitError ? (
+            <Text style={styles.errorText}>{splitError}</Text>
+          ) : null}
           <View style={styles.modalButtons}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.modalCancelButton}
               onPress={onClose}
             >
               <Text style={styles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.modalConfirmButton}
-              onPress={onConfirm}
+              onPress={handleConfirm}
             >
               <Text style={styles.modalConfirmText}>Split</Text>
             </TouchableOpacity>
@@ -76,6 +122,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 20,
     alignSelf: 'center',
+  },
+  errorText: {
+    color: '#ff5c5c',
+    fontSize: 13,
+    fontWeight: '500',
+    textAlign: 'center',
+    marginTop: -10,
+    marginBottom: 15,
   },
   modalButtons: {
     flexDirection: 'row',

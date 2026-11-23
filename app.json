@@ -2,7 +2,7 @@
   "expo": {
     "name": "flick2split",
     "slug": "flick2split",
-    "version": "2.0.1",
+    "version": "2.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "myapp",
@@ -11,6 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.flick2split",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "Flick2Split uses your camera to capture images of receipts so it can automatically read the bill details and help split the total amount, including tax and tips, between you and your friends.",
@@ -24,6 +25,13 @@
     },
     "plugins": [
       "expo-router",
+      "expo-apple-authentication",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.777817822240-3sgamulhqjvdvt7r6afl13ovu7mb7cch"
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -43,11 +51,11 @@
       },
       "eas": {
         "projectId": "2e08b1c1-88ec-42f7-8e90-abb56a426de5"
-      }
+      },
+      "googleIosClientId": "777817822240-3sgamulhqjvdvt7r6afl13ovu7mb7cch.apps.googleusercontent.com",
+      "googleWebClientId": "777817822240-mrib2g8dhejt3qrb9nogtqd3frkg3gh5.apps.googleusercontent.com"
     },
-    "runtimeVersion": {
-      "policy": "sdkVersion"
-    },
+    "runtimeVersion": "exposdk:54.0.0",
     "updates": {
       "url": "https://u.expo.dev/2e08b1c1-88ec-42f7-8e90-abb56a426de5"
     }

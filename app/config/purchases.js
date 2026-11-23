@@ -1,61 +1,105 @@
 import { Platform } from 'react-native';
-import Constants from 'expo-constants';
+import Purchases from 'react-native-purchases';
 
-const REVENUECAT_API_KEY_IOS = 'sk_WnjnASbbQjNOiKRNQLavDBIdrOvZW';
-const REVENUECAT_API_KEY_ANDROID = 'sk_WnjnASbbQjNOiKRNQLavDBIdrOvZW';
+const IOS_KEY = process.env.EXPO_PUBLIC_REVENUECAT_IOS_KEY;
+const ANDROID_KEY = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_KEY;
 
-let isInitialized = false;
+export const ENTITLEMENT_ID = 'flick2split Premium';
 
-// Skip RevenueCat entirely in Expo Go
-const isExpoGo = Constants.appOwnership === 'expo';
+let configured = false;
 
-export async function initPurchases(uid) {
-  if (isInitialized || isExpoGo) return;
+export async function initPurchases(userId) {
+  if (configured) return;
 
-  try {
-    const Purchases = require('react-native-purchases').default;
-    const apiKey = Platform.OS === 'ios' ? REVENUECAT_API_KEY_IOS : REVENUECAT_API_KEY_ANDROID;
-    Purchases.configure({ apiKey, appUserID: uid });
-    isInitialized = true;
-  } catch (error) {
-    console.log('RevenueCat configure skipped:', error.message);
+  const apiKey = Platform.OS === 'ios' ? IOS_KEY : ANDROID_KEY;
+  if (!apiKey) {
+    console.warn('RevenueCat: no API key for', Platform.OS);
+    return;
   }
+  if (apiKey.startsWith('sk_')) {
+    throw new Error('RevenueCat: refusing to use a secret key in the client bundle');
+  }
+  // Production builds must never ship with a test_ key — those route to
+  // RevenueCat's mock store and silently break real purchases on the App Store.
+  if (!__DEV__ && apiKey.startsWith('test_')) {
+    throw new Error(
+      'RevenueCat: test_ API key detected in a production build. ' +
+      'Set EXPO_PUBLIC_REVENUECAT_IOS_KEY / _ANDROID_KEY to the appl_ / goog_ keys before shipping.'
+    );
+  }
+
+  Purchases.configure({ apiKey, appUserID: userId });
+  configured = true;
+}
+
+export function isConfigured() {
+  return configured;
 }
 
 export async function getOfferings() {
-  if (isExpoGo) return null;
+  if (!configured) return null;
   try {
-    const Purchases = require('react-native-purchases').default;
     const offerings = await Purchases.getOfferings();
-    return offerings.current;
-  } catch (error) {
-    console.error('Error fetching offerings:', error);
+    return offerings.current ?? null;
+  } catch (e) {
+    console.warn('RevenueCat getOfferings error:', e);
     return null;
   }
 }
 
 export async function purchasePackage(pkg) {
-  if (isExpoGo) throw new Error('Purchases not available in Expo Go');
-  const Purchases = require('react-native-purchases').default;
-  try {
-    const { customerInfo } = await Purchases.purchasePackage(pkg);
-    return customerInfo;
-  } catch (error) {
-    if (!error.userCancelled) {
-      console.error('Purchase error:', error);
-    }
-    throw error;
+  const { customerInfo } = await Purchases.purchasePackage(pkg);
+  return customerInfo;
+}
+
+export async function purchaseProduct(productId) {
+  const products = await Purchases.getProducts([productId]);
+  if (!products || products.length === 0) {
+    throw new Error(`Product ${productId} not found`);
   }
+  const { customerInfo } = await Purchases.purchaseStoreProduct(products[0]);
+  return customerInfo;
 }
 
 export async function restorePurchases() {
-  if (isExpoGo) throw new Error('Purchases not available in Expo Go');
-  const Purchases = require('react-native-purchases').default;
+  const customerInfo = await Purchases.restorePurchases();
+  return customerInfo;
+}
+
+export async function getCustomerInfo() {
+  if (!configured) return null;
   try {
-    const customerInfo = await Purchases.restorePurchases();
-    return customerInfo;
-  } catch (error) {
-    console.error('Restore error:', error);
-    throw error;
+    return await Purchases.getCustomerInfo();
+  } catch (e) {
+    console.warn('RevenueCat getCustomerInfo error:', e);
+    return null;
   }
+}
+
+export function hasPremiumEntitlement(customerInfo) {
+  if (!customerInfo) return false;
+  return typeof customerInfo.entitlements?.active?.[ENTITLEMENT_ID] !== 'undefined';
+}
+
+export function addCustomerInfoUpdateListener(callback) {
+  Purchases.addCustomerInfoUpdateListener(callback);
+  return () => Purchases.removeCustomerInfoUpdateListener(callback);
+}
+
+export async function presentPaywall() {
+  if (!configured) return false;
+  const RevenueCatUI = require('react-native-purchases-ui').default;
+  const { PAYWALL_RESULT } = require('react-native-purchases-ui');
+  const result = await RevenueCatUI.presentPaywall();
+  return result === PAYWALL_RESULT.PURCHASED || result === PAYWALL_RESULT.RESTORED;
+}
+
+export async function presentPaywallIfNeeded() {
+  if (!configured) return false;
+  const RevenueCatUI = require('react-native-purchases-ui').default;
+  const { PAYWALL_RESULT } = require('react-native-purchases-ui');
+  const result = await RevenueCatUI.presentPaywallIfNeeded({
+    requiredEntitlementIdentifier: ENTITLEMENT_ID,
+  });
+  return result === PAYWALL_RESULT.PURCHASED || result === PAYWALL_RESULT.RESTORED;
 }

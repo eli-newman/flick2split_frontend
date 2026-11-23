@@ -27,7 +27,7 @@ export const calculateSubtotal = (items) => {
 };
 
 // Format guest details for sharing
-export const formatGuestDetailsForSharing = (previousGuests, billData, targetCurrency, originalCurrency, exchangeRate, venmoUsername) => {
+export const formatGuestDetailsForSharing = (previousGuests, billData, targetCurrency, originalCurrency, exchangeRate, venmoUsername, splitId) => {
   if (!previousGuests || previousGuests.length === 0) {
     return "No guests have been added yet.";
   }
@@ -112,6 +112,9 @@ export const formatGuestDetailsForSharing = (previousGuests, billData, targetCur
 
   message += "------------------------------\n";
   message += venmoUsername ? `Pay me on Venmo: https://venmo.com/u/${venmoUsername}\n` : "Please Venmo or pay in cash!\n";
+  if (splitId) {
+    message += `See full breakdown: https://flick2split.com/split/${splitId}\n`;
+  }
   message += "Sent via Flick2Split";
 
   return message;
@@ -127,14 +130,14 @@ const formatCurrencyAmountForSharing = (amount, targetCurrency, originalCurrency
 };
 
 // Handle share button press
-export const handleShare = async (previousGuests, billData, targetCurrency, originalCurrency, exchangeRate, Share, venmoUsername) => {
+export const handleShare = async (previousGuests, billData, targetCurrency, originalCurrency, exchangeRate, Share, venmoUsername, splitId) => {
   try {
     if (!previousGuests || previousGuests.length === 0) {
       Alert.alert('No Data', 'There are no guests to share information about.');
       return;
     }
 
-    const message = formatGuestDetailsForSharing(previousGuests, billData, targetCurrency, originalCurrency, exchangeRate, venmoUsername);
+    const message = formatGuestDetailsForSharing(previousGuests, billData, targetCurrency, originalCurrency, exchangeRate, venmoUsername, splitId);
     await Share.share({
       message: message,
       title: 'Bill Split Details'

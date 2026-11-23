@@ -57,7 +57,28 @@ export default function Paywall() {
   }, []);
 
   const loadOfferings = async () => {
-    const current = await getOfferings();
+    let current = await getOfferings();
+
+    // Dev-only mock offerings for App Store screenshots
+    if (__DEV__ && (!current || !current.availablePackages?.length)) {
+      current = {
+        availablePackages: [
+          {
+            identifier: '$rc_annual',
+            product: { identifier: 'com.flick2split.pro.annual', priceString: '$9.99', price: 9.99, currencyCode: 'USD' },
+          },
+          {
+            identifier: '$rc_monthly',
+            product: { identifier: 'com.flick2split.pro.monthly', priceString: '$1.99', price: 1.99, currencyCode: 'USD' },
+          },
+          {
+            identifier: 'scan_credit',
+            product: { identifier: 'flick2split_scan_credit', priceString: '$0.99', price: 0.99, currencyCode: 'USD' },
+          },
+        ],
+      };
+    }
+
     setOfferings(current);
     setLoading(false);
 
@@ -91,9 +112,12 @@ export default function Paywall() {
       // isPremium. Firestore rules forbid client writes to that field so we can't
       // optimistically mirror it here. The webhook typically fires within 1–3s.
       logEvent(user?.uid, 'paywall_purchase_succeeded', { package_id: pkg.identifier, trigger });
-      Alert.alert('Welcome to Premium!', 'You now have unlimited scans.', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
+      const isSub = pkg.product?.identifier?.includes('monthly') || pkg.product?.identifier?.includes('annual');
+      Alert.alert(
+        isSub ? 'Welcome to Premium!' : 'Scan Credit Added!',
+        isSub ? 'You now have unlimited scans.' : 'Your scan credit is ready to use.',
+        [{ text: 'OK', onPress: () => router.back() }],
+      );
     } catch (error) {
       logEvent(user?.uid, 'paywall_purchase_failed', {
         package_id: pkg.identifier,
@@ -155,7 +179,7 @@ export default function Paywall() {
 
   const annualPkg = findPackage('annual');
   const monthlyPkg = findPackage('monthly');
-  const lifetimePkg = findPackage('lifetime');
+  const scanCreditPkg = findPackage('scan_credit');
 
   const hasOfferings = !!(offerings?.availablePackages && offerings.availablePackages.length > 0);
 
@@ -212,8 +236,8 @@ export default function Paywall() {
             </View>
             <Text style={styles.headerTitle}>Upgrade to Premium</Text>
             <Text style={styles.headerSubtitle}>
-              You&apos;ve used your 3 free scans this month.{'\n'}
-              Go unlimited with Premium!
+              You&apos;ve used your 2 free scans.{'\n'}
+              Go unlimited or buy scans as you go!
             </Text>
           </View>
 
@@ -222,6 +246,7 @@ export default function Paywall() {
             {[
               ['scan-outline', 'Unlimited receipt scans'],
               ['flash-outline', 'Priority AI processing'],
+              ['cart-outline', 'Or pay per scan — no commitment'],
               ['heart-outline', 'Support indie development'],
             ].map(([icon, text]) => (
               <View key={text} style={styles.featureRow}>
@@ -308,22 +333,34 @@ export default function Paywall() {
                 </TouchableOpacity>
               )}
 
-              {/* Lifetime */}
-              {lifetimePkg && (
+              {/* Divider */}
+              {scanCreditPkg && (
+                <View style={styles.orDivider}>
+                  <View style={styles.orLine} />
+                  <Text style={styles.orText}>or just buy a scan</Text>
+                  <View style={styles.orLine} />
+                </View>
+              )}
+
+              {/* Pay-per-scan credit */}
+              {scanCreditPkg && (
                 <TouchableOpacity
                   style={styles.optionCard}
-                  onPress={() => handlePurchase(lifetimePkg)}
+                  onPress={() => handlePurchase(scanCreditPkg)}
                   disabled={purchasing !== null}
                 >
-                  {purchasing === lifetimePkg.identifier ? (
+                  {purchasing === scanCreditPkg.identifier ? (
                     <ActivityIndicator color="#3442C6" />
                   ) : (
                     <View style={styles.optionRow}>
                       <View>
-                        <Text style={styles.optionPrice}>{lifetimePkg.product?.priceString}</Text>
-                        <Text style={styles.optionLabel}>Lifetime</Text>
+                        <Text style={styles.optionPrice}>
+                          {scanCreditPkg.product?.priceString}
+                          <Text style={styles.optionPricePer}>/scan</Text>
+                        </Text>
+                        <Text style={styles.optionLabel}>Single Scan Credit</Text>
                       </View>
-                      <Text style={styles.optionDetail}>One-time purchase</Text>
+                      <Text style={styles.optionDetail}>No subscription needed</Text>
                     </View>
                   )}
                 </TouchableOpacity>
@@ -338,6 +375,7 @@ export default function Paywall() {
                 Subscriptions auto-renew at the prices shown above until canceled. Subscription
                 automatically renews unless canceled at least 24 hours before the end of the current
                 period. Manage or cancel anytime in your App Store account settings.
+                Scan credits are one-time purchases and do not auto-renew.
               </Text>
               <View style={styles.disclosureLinks}>
                 <TouchableOpacity onPress={() => Linking.openURL(TERMS_URL)}>
@@ -486,6 +524,23 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#4CDE80',
     marginBottom: 2,
+  },
+  orDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 4,
+    paddingHorizontal: 10,
+  },
+  orLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  orText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
+    fontWeight: '600',
+    marginHorizontal: 12,
   },
   unavailable: {
     backgroundColor: 'rgba(255,255,255,0.12)',

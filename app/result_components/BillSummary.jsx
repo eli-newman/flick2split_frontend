@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 
 /**
  * BillSummary component for displaying bill totals and split button
@@ -13,8 +14,7 @@ export const BillSummary = ({
   splitComplete,
   shareGuestList
 }) => {
-  // Import useRouter from expo-router
-  const router = require('expo-router').useRouter();
+  const router = useRouter();
   
   // Function to handle split evenly navigation
   const handleSplitEvenly = () => {

@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Linking, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { currencies } from '../utils/currencies';
+import { useRequireAuth } from '../auth/SignUpSheetContext';
 
 const GuestSummary = ({ 
   guests, 
@@ -46,7 +47,30 @@ const GuestSummary = ({
   
   // Check if conversion is active
   const isConversionActive = targetCurrency && targetCurrency !== originalCurrency;
-  
+
+  const requireAuth = useRequireAuth();
+
+  const openVenmo = (amount, guestName) => {
+    requireAuth(
+      () => {
+        const note = encodeURIComponent(`Bill split`);
+        const venmoUrl = `venmo://paycharge?txn=pay&amount=${amount.toFixed(2)}&note=${note}`;
+        Linking.canOpenURL(venmoUrl)
+          .then(supported => {
+            if (supported) return Linking.openURL(venmoUrl);
+            const webUrl = `https://venmo.com/?txn=pay&amount=${amount.toFixed(2)}&note=${note}`;
+            return Linking.openURL(webUrl);
+          })
+          .catch(() => Alert.alert('Error', 'Could not open Venmo'));
+      },
+      {
+        surface: 'post_split_venmo',
+        title: `Send ${guestName} their share`,
+        subtitle: 'Sign up to save this split and pay with Venmo. Takes 5 seconds.',
+      }
+    );
+  };
+
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>Guest Totals</Text>
@@ -133,11 +157,21 @@ const GuestSummary = ({
               <View style={styles.guestItemRow}>
                 <Text style={styles.guestItemTotal}>Total</Text>
                 <Text style={styles.guestItemTotalPrice}>
-                  {isConversionActive ? 
-                    formatConvertedTotal(guest.total) : 
+                  {isConversionActive ?
+                    formatConvertedTotal(guest.total) :
                     formatTotal(guest.total)}
                 </Text>
               </View>
+
+              <TouchableOpacity
+                style={styles.venmoButton}
+                onPress={() => openVenmo(
+                  isConversionActive ? guest.total * exchangeRate : guest.total,
+                  guest.name
+                )}
+              >
+                <Text style={styles.venmoButtonText}>Pay with Venmo</Text>
+              </TouchableOpacity>
             </View>
           )}
         </View>
@@ -262,6 +296,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#666',
   },
+  venmoButton: {
+    backgroundColor: '#3D95CE',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  venmoButtonText: {
+    color: 'white',
+    fontWeight: '700',
+    fontSize: 14,
+  },
 });
 
-export default GuestSummary; 
+export default React.memo(GuestSummary);

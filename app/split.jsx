@@ -22,6 +22,11 @@ import { useCurrencyConverter, CurrencyConverterButton, CurrencyConverterModal }
 import { currencies } from './utils/currencies';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from './config/AuthContext';
+import { useRequireAuth } from './auth/SignUpSheetContext';
+import { logEvent } from './utils/analytics';
+import { collection, addDoc, setDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { db } from './config/firebase';
+import { maybePromptForReview } from './utils/reviewPrompt';
 
 // Import custom components
 import Header from './split_components/Header';
@@ -43,10 +48,13 @@ import {
 export default function SplitBill() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { userProfile } = useAuth();
+  const { user, userProfile } = useAuth();
   
   // Parse the bill data from params
-  const [billData, setBillData] = useState(params.billData ? JSON.parse(params.billData) : null);
+  const [billData, setBillData] = useState(() => {
+    if (!params.billData) return null;
+    try { return JSON.parse(params.billData); } catch { return null; }
+  });
   
   // State for the current guest
   const [guestName, setGuestName] = useState('');
@@ -55,7 +63,9 @@ export default function SplitBill() {
   const [selectedItems, setSelectedItems] = useState([]);
   const [previousGuests, setPreviousGuests] = useState([]);
   const [expandedGuest, setExpandedGuest] = useState(null);
-  
+  const [frequentGuests, setFrequentGuests] = useState([]);
+  const [splitId, setSplitId] = useState(null);
+
   // State for split modal
   const [splitModalVisible, setSplitModalVisible] = useState(false);
   const [itemToSplit, setItemToSplit] = useState(null);
@@ -89,7 +99,7 @@ export default function SplitBill() {
     targetSearchQuery,
     setTargetSearchQuery,
     convertCurrency
-  } = useCurrencyConverter(billData?.currency_code || 'USD');
+  } = useCurrencyConverter(billData?.currency || 'USD');
   
   // Help modal toggle
   const toggleHelp = () => {
@@ -112,11 +122,18 @@ export default function SplitBill() {
     }
   }, [billData]);
 
-  // Restore split progress on mount
+  // Restore split progress and frequent guests on mount
   useEffect(() => {
     (async () => {
       try {
-        const saved = await AsyncStorage.getItem('splitProgress');
+        const [saved, savedFrequent] = await Promise.all([
+          AsyncStorage.getItem('splitProgress'),
+          AsyncStorage.getItem('frequentGuests'),
+        ]);
+        if (savedFrequent) {
+          const parsed = JSON.parse(savedFrequent);
+          if (Array.isArray(parsed)) setFrequentGuests(parsed);
+        }
         if (saved && billData) {
           const progress = JSON.parse(saved);
           // Only restore if it's the same bill
@@ -290,7 +307,7 @@ export default function SplitBill() {
   };
   
   // Handle confirming items for current guest
-  const confirmGuestItems = () => {
+  const confirmGuestItems = async () => {
     if (selectedItems.length === 0) {
       Alert.alert("No Items Selected", "Please select at least one item for this guest.");
       return;
@@ -316,11 +333,82 @@ export default function SplitBill() {
     };
     
     // Add guest to list and update available items
-    setPreviousGuests([...previousGuests, newGuest]);
+    const updatedGuests = [...previousGuests, newGuest];
+    setPreviousGuests(updatedGuests);
     const remainingItems = availableItems.filter(
       item => !selectedItems.some(selected => selected.id === item.id)
     );
-    
+
+    // Log split_started on first guest
+    if (previousGuests.length === 0) {
+      logEvent(user?.uid, 'split_started', {
+        guest_count: 1,
+        total_amount: billData?.total || 0,
+      });
+    }
+
+    // When all items are assigned, log completion and save to Firestore
+    if (remainingItems.length === 0) {
+      logEvent(user?.uid, 'split_completed', {
+        guest_count: updatedGuests.length,
+        total_amount: billData?.total || 0,
+      });
+      if (user?.uid) {
+        try {
+          const guestSnapshot = updatedGuests.map(g => ({
+            name: g.name,
+            total: g.total,
+            subtotal: g.subtotal,
+            tax: g.tax,
+            tip: g.tip,
+            items: g.items.map(i => ({ name: i.name, price: i.price })),
+          }));
+
+          const docRef = await addDoc(collection(db, 'users', user.uid, 'splits'), {
+            bill: {
+              restaurant: billData?.restaurant || '',
+              currency: billData?.currency || 'USD',
+              total: billData?.total || 0,
+            },
+            guests: guestSnapshot,
+            createdAt: serverTimestamp(),
+          });
+
+          const newSplitId = docRef.id;
+          setSplitId(newSplitId);
+
+          // Write public summary (world-readable) for shareable guest link
+          await setDoc(doc(db, 'publicSplits', newSplitId), {
+            restaurant: billData?.restaurant || '',
+            currency: billData?.currency || 'USD',
+            guests: guestSnapshot,
+            createdAt: serverTimestamp(),
+          });
+        } catch (e) {
+          console.warn('[split-save] Firestore write failed', { uid: user?.uid, code: e?.code, message: e?.message });
+        }
+      }
+
+      // Wait ~1.5s after the celebration animation kicks in before prompting
+      // so we don't interrupt the success moment.
+      setTimeout(() => {
+        maybePromptForReview(user?.uid);
+      }, 1500);
+
+      // Persist guest names for quick-add in future splits (max 20, most recent first)
+      try {
+        const newNames = updatedGuests.map(g => g.name);
+        const merged = [
+          ...newNames,
+          ...frequentGuests.filter(n => !newNames.includes(n)),
+        ].slice(0, 20);
+        setFrequentGuests(merged);
+        await AsyncStorage.setItem('frequentGuests', JSON.stringify(merged));
+      } catch {
+        // silent
+      }
+    }
+
     // Reset for next guest
     setAvailableItems(remainingItems);
     setSelectedItems([]);
@@ -337,22 +425,31 @@ export default function SplitBill() {
   };
   
   // Format guest details for sharing
+  const requireAuth = useRequireAuth();
   const handleShare = async () => {
-    await shareDetails(
-      previousGuests,
-      billData,
-      targetCurrency,
-      originalCurrency,
-      exchangeRate,
-      Share,
-      userProfile?.venmoUsername
+    requireAuth(
+      () => shareDetails(
+        previousGuests,
+        billData,
+        targetCurrency,
+        originalCurrency,
+        exchangeRate,
+        Share,
+        userProfile?.venmoUsername,
+        splitId,
+      ),
+      {
+        surface: 'post_split_share',
+        title: 'Share this split with your friends',
+        subtitle: 'Sign up to send everyone their share and keep this split in your history.',
+      },
     );
   };
   
   // Reset currency conversion
   const handleReset = () => {
     // Reset to original currency and clear target currency
-    setOriginalCurrency(billData?.currency_code || 'USD');
+    setOriginalCurrency(billData?.currency || 'USD');
     setTargetCurrency(null);
     
     // Reset any search queries
@@ -456,10 +553,12 @@ export default function SplitBill() {
             {availableItems.length > 0 ? (
               // Show guest name input or item selection only if there are items left
               showNameInput ? (
-                <GuestNameInput 
-                  guestName={guestName} 
-                  setGuestName={setGuestName} 
-                  onNext={handleNextAfterName} 
+                <GuestNameInput
+                  guestName={guestName}
+                  setGuestName={setGuestName}
+                  onNext={handleNextAfterName}
+                  frequentGuests={frequentGuests}
+                  existingGuests={previousGuests.map(g => g.name)}
                 />
               ) : (
                 <ItemSelection 

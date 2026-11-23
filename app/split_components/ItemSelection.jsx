@@ -1,20 +1,40 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, FlatList, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-const ItemSelection = ({ 
-  guestName, 
-  availableItems, 
-  selectedItems, 
-  onItemSelect, 
-  onSplitItem, 
-  onConfirm, 
-  formatCurrency 
+const ItemSelection = ({
+  guestName,
+  availableItems,
+  selectedItems,
+  onItemSelect,
+  onSplitItem,
+  onConfirm,
+  formatCurrency
 }) => {
+  const [selectionError, setSelectionError] = useState('');
+
+  // Clear the error as soon as the user picks at least one item
+  useEffect(() => {
+    if (selectedItems.length > 0 && selectionError) {
+      setSelectionError('');
+    }
+  }, [selectedItems.length, selectionError]);
+
+  const handleConfirm = () => {
+    if (!selectedItems || selectedItems.length === 0) {
+      setSelectionError('Select at least one item');
+      return;
+    }
+    setSelectionError('');
+    onConfirm();
+  };
+
+  const hasNoSelection = !selectedItems || selectedItems.length === 0;
+
   return (
     <View style={styles.card}>
       <Text style={styles.sectionTitle}>Select Items for {guestName}</Text>
-      
+
       {availableItems.length === 0 ? (
         <Text style={styles.noItemsText}>No items available</Text>
       ) : (
@@ -22,7 +42,7 @@ const ItemSelection = ({
           data={availableItems}
           keyExtractor={item => item.id}
           renderItem={({ item }) => (
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[
                 styles.itemRow,
                 selectedItems.some(i => i.id === item.id) && styles.selectedItem
@@ -38,7 +58,7 @@ const ItemSelection = ({
               <View style={styles.itemPriceContainer}>
                 <Text style={styles.itemPrice}>{formatCurrency(item.price)}</Text>
                 {!item.isSplit && (
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     style={styles.splitButton}
                     onPress={() => onSplitItem(item)}
                   >
@@ -52,11 +72,16 @@ const ItemSelection = ({
           style={styles.itemsList}
         />
       )}
-      
+
+      {selectionError ? (
+        <Text style={styles.errorText}>{selectionError}</Text>
+      ) : null}
+
       <View style={styles.buttonContainer}>
-        <TouchableOpacity 
-          style={styles.confirmButton}
-          onPress={onConfirm}
+        <TouchableOpacity
+          style={[styles.confirmButton, hasNoSelection && styles.confirmButtonDisabled]}
+          onPress={handleConfirm}
+          disabled={hasNoSelection}
         >
           <Text style={styles.confirmButtonText}>Confirm Items</Text>
         </TouchableOpacity>
@@ -141,6 +166,10 @@ const styles = StyleSheet.create({
     borderRadius: 30,
     alignItems: 'center',
   },
+  confirmButtonDisabled: {
+    backgroundColor: '#b6e8c5',
+    opacity: 0.7,
+  },
   confirmButtonText: {
     color: 'white',
     fontWeight: '700',
@@ -151,6 +180,13 @@ const styles = StyleSheet.create({
     color: '#666',
     marginVertical: 20,
     fontStyle: 'italic',
+  },
+  errorText: {
+    color: '#ff5c5c',
+    fontSize: 13,
+    fontWeight: '500',
+    textAlign: 'center',
+    marginBottom: 10,
   },
 });
 

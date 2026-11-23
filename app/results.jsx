@@ -6,6 +6,9 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Sharing from 'expo-sharing';
 import { LinearGradient } from 'expo-linear-gradient';
 
+import { useAuth } from './config/AuthContext';
+import { logEvent } from './utils/analytics';
+
 // Import modularized components
 import { ItemsList } from './result_components/ItemsList';
 import { TipSection } from './result_components/TipSection';
@@ -19,9 +22,15 @@ export default function Results() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const scrollViewRef = useRef(null);
+  const { user } = useAuth();
   
   // Initialize bill state from params
-  const initialBill = params.bill ? JSON.parse(params.bill) : null;
+  let initialBill = null;
+  try {
+    initialBill = params.bill ? JSON.parse(params.bill) : null;
+  } catch (e) {
+    initialBill = null;
+  }
   
   // Process initial bill data to ensure prices are numbers
   const processedInitialBill = initialBill ? {
@@ -78,24 +87,28 @@ export default function Results() {
    * Item update handlers
    */
   const updateItemName = (index, newName) => {
+    const original = bill.items[index]?.name;
     const updatedItems = [...bill.items];
     updatedItems[index] = { ...updatedItems[index], name: newName || "Item" };
     setBill(prev => ({ ...prev, items: updatedItems }));
     setEditingName(null);
+    if (original !== newName) logEvent(user?.uid, 'bill_edited', { field: 'name', original, corrected: newName });
   };
 
   const calculateSubtotal = (items) => {
     return items.reduce((sum, item) => {
-      return sum + (parseFloat(item.price) || 0);
+      return sum + (parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1);
     }, 0);
   };
 
   const updateItemPrice = (index, newPrice) => {
+    const original = bill.items[index]?.price;
     const updatedItems = [...bill.items];
-    updatedItems[index] = { 
-      ...updatedItems[index], 
-      price: parseFloat(newPrice) || 0 
+    updatedItems[index] = {
+      ...updatedItems[index],
+      price: parseFloat(newPrice) || 0
     };
+    if (original !== parseFloat(newPrice)) logEvent(user?.uid, 'bill_edited', { field: 'price', original, corrected: parseFloat(newPrice) || 0 });
     
     // Only update subtotal if items are already confirmed
     if (itemsConfirmed) {

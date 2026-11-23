@@ -248,7 +248,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   resetIconButton: {
-    backgroundColor: "white",
+    backgroundColor: '#FFD54F',
     borderRadius: 30,
     width: 50,
     height: 50,
@@ -260,7 +260,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 3,
     elevation: 2,
-    backgroundColor: '#FFD54F',
   },
   currencyIcon: {
     marginRight: 8,

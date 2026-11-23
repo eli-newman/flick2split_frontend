@@ -1,5 +1,5 @@
 import { View, Text, Modal, TouchableOpacity, StyleSheet, TextInput, Alert, FlatList, ActivityIndicator, SafeAreaView, KeyboardAvoidingView, Platform } from 'react-native';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { currencies, searchCurrencies } from './utils/currencies';
@@ -11,11 +11,23 @@ export const useCurrencyConverter = (initialCurrencyCode = null) => {
   const [originalCurrency, setOriginalCurrency] = useState(null);
   const [targetCurrency, setTargetCurrency] = useState(null);
   const [exchangeRate, setExchangeRate] = useState(1);
+  const [exchangeRateError, setExchangeRateError] = useState(false);
   const [showOriginalDropdown, setShowOriginalDropdown] = useState(false);
   const [showTargetDropdown, setShowTargetDropdown] = useState(false);
   const [originalSearchQuery, setOriginalSearchQuery] = useState('');
   const [targetSearchQuery, setTargetSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Track mount state so we don't call setState after unmount.
+  // Firebase callable functions don't support AbortSignal, so we
+  // guard setState calls with this ref instead.
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const getExchangeRate = async (fromCurrency, toCurrency) => {
     if (fromCurrency === toCurrency) {
@@ -35,24 +47,27 @@ export const useCurrencyConverter = (initialCurrencyCode = null) => {
 
   const fetchExchangeRate = async (fromCurrency, toCurrency) => {
     if (fromCurrency === toCurrency) {
-      setExchangeRate(1);
+      if (isMountedRef.current) {
+        setExchangeRate(1);
+        setExchangeRateError(false);
+      }
       return;
     }
 
-    setLoading(true);
+    if (isMountedRef.current) {
+      setLoading(true);
+      setExchangeRateError(false);
+    }
     try {
       const rate = await getExchangeRate(fromCurrency, toCurrency);
-      setExchangeRate(rate);
+      if (isMountedRef.current) setExchangeRate(rate);
     } catch (error) {
-      const msg = error.message || '';
-      if (msg.includes('network') || msg.includes('Network') || msg.includes('fetch') || error.code === 'unavailable') {
-        Alert.alert('No Internet', 'Currency conversion requires an internet connection. Please check your connection and try again.');
-      } else {
-        Alert.alert('Conversion Error', 'Unable to get exchange rate. Please try again.');
-      }
-      setExchangeRate(1);
+      // Soft-fail: keep the previous rate so downstream multiplications/.toFixed don't crash;
+      // expose `exchangeRateError` for any caller that wants to render an "unavailable" UI.
+      console.warn('[CurrencyConverter] Failed to fetch exchange rate:', error?.message || error);
+      if (isMountedRef.current) setExchangeRateError(true);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
     }
   };
 
@@ -82,6 +97,7 @@ export const useCurrencyConverter = (initialCurrencyCode = null) => {
     targetCurrency,
     setTargetCurrency,
     exchangeRate,
+    exchangeRateError,
     showOriginalDropdown,
     setShowOriginalDropdown,
     showTargetDropdown,
@@ -185,6 +201,9 @@ const CurrencyPickerView = ({ title, selectedCurrency, searchQuery, onSearchChan
         renderItem={renderItem}
         keyExtractor={(item) => item.code}
         getItemLayout={getItemLayout}
+        maxToRenderPerBatch={20}
+        updateCellsBatchingPeriod={50}
+        windowSize={10}
         style={styles.pickerList}
         keyboardShouldPersistTaps="handled"
         ListEmptyComponent={

@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Text, View, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ActivityIndicator, Dimensions,
-  Animated, Alert,
+  Animated, Alert, ScrollView,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -14,6 +15,8 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import { signInWithApple, isAppleAuthAvailable } from '../config/appleAuth';
+import { signInWithGoogle, isGoogleAuthAvailable } from '../config/googleAuth';
 
 const { width } = Dimensions.get('window');
 
@@ -23,7 +26,48 @@ export default function SignIn() {
   const [venmoUsername, setVenmoUsername] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [socialBusy, setSocialBusy] = useState(null); // 'apple' | 'google' | null
   const [error, setError] = useState('');
+  const [appleAvailable, setAppleAvailable] = useState(false);
+  const [googleAvailable, setGoogleAvailable] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    isAppleAuthAvailable().then((ok) => {
+      if (!cancelled) setAppleAvailable(ok && Platform.OS === 'ios');
+    });
+    isGoogleAuthAvailable().then((ok) => {
+      if (!cancelled) setGoogleAvailable(!!ok);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleApple = async () => {
+    setError('');
+    setSocialBusy('apple');
+    try {
+      await signInWithApple();
+      // AuthGate handles navigation
+    } catch (e) {
+      if (e?.code !== 'apple/cancelled') {
+        setError(socialMessageFor(e));
+      }
+      setSocialBusy(null);
+    }
+  };
+
+  const handleGoogle = async () => {
+    setError('');
+    setSocialBusy('google');
+    try {
+      await signInWithGoogle();
+    } catch (e) {
+      if (e?.code !== 'google/cancelled') {
+        setError(socialMessageFor(e));
+      }
+      setSocialBusy(null);
+    }
+  };
 
   const currentMonth = () => {
     const now = new Date();
@@ -73,6 +117,8 @@ export default function SignIn() {
           premiumType: null,
           scanCount: 0,
           scanResetDate: currentMonth(),
+          scanCredits: 0,
+          freeScansUsed: 0,
         });
       } else {
         await signInWithEmailAndPassword(auth, email, password);
@@ -118,10 +164,59 @@ export default function SignIn() {
           </View>
 
           {/* Form */}
-          <View style={styles.formContainer}>
+          <ScrollView
+            style={styles.formScroll}
+            contentContainerStyle={styles.formContainer}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
             <Text style={styles.formTitle}>
               {isSignUp ? 'Create Account' : 'Welcome Back'}
             </Text>
+
+            {appleAvailable && (
+              <TouchableOpacity
+                style={[styles.appleButton, socialBusy === 'apple' && styles.buttonBusy]}
+                onPress={handleApple}
+                disabled={!!socialBusy || loading}
+                activeOpacity={0.85}
+              >
+                {socialBusy === 'apple' ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <>
+                    <Ionicons name="logo-apple" size={20} color="white" style={{ marginRight: 8 }} />
+                    <Text style={styles.appleButtonText}>Continue with Apple</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
+
+            {googleAvailable && (
+              <TouchableOpacity
+                style={[styles.googleButton, socialBusy === 'google' && styles.buttonBusy]}
+                onPress={handleGoogle}
+                disabled={!!socialBusy || loading}
+                activeOpacity={0.85}
+              >
+                {socialBusy === 'google' ? (
+                  <ActivityIndicator color="#1F1F1F" />
+                ) : (
+                  <>
+                    <Ionicons name="logo-google" size={20} color="#1F1F1F" style={{ marginRight: 8 }} />
+                    <Text style={styles.googleButtonText}>Continue with Google</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
+
+            {(appleAvailable || googleAvailable) && (
+              <View style={styles.dividerRow}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>or</Text>
+                <View style={styles.dividerLine} />
+              </View>
+            )}
 
             <TextInput
               style={styles.input}
@@ -195,7 +290,7 @@ export default function SignIn() {
                   : "Don't have an account? Sign Up"}
               </Text>
             </TouchableOpacity>
-          </View>
+          </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
     </>
@@ -248,12 +343,66 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 5,
   },
+  formScroll: {
+    maxHeight: '85%',
+    flexGrow: 0,
+  },
   formContainer: {
     backgroundColor: 'rgba(255, 255, 255, 0.12)',
     borderRadius: 24,
     padding: 28,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  appleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'black',
+    borderRadius: 14,
+    paddingVertical: 14,
+    marginBottom: 10,
+    minHeight: 50,
+  },
+  appleButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'white',
+    borderRadius: 14,
+    paddingVertical: 14,
+    marginBottom: 10,
+    minHeight: 50,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  googleButtonText: {
+    color: '#1F1F1F',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  buttonBusy: { opacity: 0.7 },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 14,
+  },
+  dividerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(255, 255, 255, 0.35)',
+  },
+  dividerText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 12,
+    fontWeight: '600',
+    marginHorizontal: 10,
+    letterSpacing: 1,
   },
   formTitle: {
     fontSize: 24,
@@ -315,3 +464,19 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 });
+
+function socialMessageFor(e) {
+  const code = e?.code || '';
+  const map = {
+    'apple/unavailable': 'Sign in with Apple is not available on this device.',
+    'apple/credential-conflict': 'This Apple ID is already linked to another account.',
+    'apple/profile-write-failed': 'Signed in, but we couldn\'t save your profile. Please try again.',
+    'google/unavailable': 'Sign in with Google is not available on this device.',
+    'google/play-services-unavailable': 'Google Play Services is required for Google Sign-In.',
+    'google/credential-conflict': 'This Google account is already linked to another account.',
+    'google/profile-write-failed': 'Signed in, but we couldn\'t save your profile. Please try again.',
+    'google/no-id-token': 'Google didn\'t return a token. Please try again.',
+    'auth/network-request-failed': 'Network error. Check your connection and try again.',
+  };
+  return map[code] || 'Sign-in failed. Please try again.';
+}

@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from './config/firebase';
 import { useAuth } from './config/AuthContext';
+import { logEvent } from './utils/analytics';
 
 
 const { width } = Dimensions.get('window');
@@ -28,7 +29,7 @@ export default function Index() {
   const [errorVisible, setErrorVisible] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const router = useRouter();
-  const { userProfile } = useAuth();
+  const { user, userProfile } = useAuth();
   
   // Animation values
   const circle1Animation = useRef(new Animated.Value(0)).current;
@@ -295,10 +296,11 @@ export default function Index() {
 
     // Client-side scan limit check — redirect to paywall if exceeded
     if (userProfile && !userProfile.isPremium) {
-      const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-      const count = userProfile.scanResetDate === currentMonth ? (userProfile.scanCount || 0) : 0;
-      if (count >= 3) {
-        router.push('/paywall');
+      const freeScansUsed = userProfile.freeScansUsed || 0;
+      const scanCredits = userProfile.scanCredits || 0;
+      if (freeScansUsed >= 2 && scanCredits <= 0) {
+        logEvent(user?.uid, 'paywall_redirect', { trigger: 'scan_limit_pre', free_scans_used: freeScansUsed });
+        router.push({ pathname: '/paywall', params: { trigger: 'scan_limit_pre' } });
         return;
       }
     }
@@ -322,6 +324,11 @@ export default function Index() {
       }
 
       setResponseData(data);
+      logEvent(user?.uid, 'bill_scanned', {
+        item_count: data.bill?.items?.length ?? 0,
+        has_tip: (data.bill?.tip || 0) > 0,
+        currency: data.bill?.currency || 'USD',
+      });
       router.push({
         pathname: '/results',
         params: { bill: JSON.stringify(data.bill) }
@@ -335,7 +342,8 @@ export default function Index() {
 
       if (error.code === 'functions/resource-exhausted') {
         // Scan limit hit server-side
-        router.push('/paywall');
+        logEvent(user?.uid, 'paywall_redirect', { trigger: 'scan_limit_server' });
+        router.push({ pathname: '/paywall', params: { trigger: 'scan_limit_server' } });
         setButtonState("idle");
         return;
       } else if (
@@ -607,18 +615,49 @@ export default function Index() {
                 
                 <Text style={styles.instructions}>Snap a photo of your bill or upload one</Text>
 
-                {userProfile && !userProfile.isPremium && (
-                  <View style={styles.scanCounter}>
-                    <Ionicons name="scan-outline" size={14} color="rgba(255,255,255,0.85)" />
-                    <Text style={styles.scanCounterText}>
-                      {(() => {
-                        const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-                        const count = userProfile.scanResetDate === currentMonth ? (userProfile.scanCount || 0) : 0;
-                        return `${count}/3 free scans this month`;
-                      })()}
-                    </Text>
-                  </View>
-                )}
+                {userProfile && !userProfile.isPremium && (() => {
+                  const freeScansUsed = userProfile.freeScansUsed || 0;
+                  const scanCredits = userProfile.scanCredits || 0;
+                  const freeRemaining = Math.max(0, 2 - freeScansUsed);
+
+                  let statusText;
+                  if (freeRemaining > 0) {
+                    statusText = `${freeRemaining} free scan${freeRemaining !== 1 ? 's' : ''} remaining`;
+                  } else if (scanCredits > 0) {
+                    statusText = `${scanCredits} scan credit${scanCredits !== 1 ? 's' : ''} remaining`;
+                  } else {
+                    statusText = 'No scans remaining';
+                  }
+
+                  const showUpsell = freeRemaining <= 1;
+
+                  return (
+                    <>
+                      <View style={styles.scanCounter}>
+                        <Ionicons name="scan-outline" size={14} color="rgba(255,255,255,0.85)" />
+                        <Text style={styles.scanCounterText}>{statusText}</Text>
+                      </View>
+                      {showUpsell && (
+                        <TouchableOpacity
+                          style={styles.upsellBanner}
+                          onPress={() => {
+                            logEvent(user?.uid, 'paywall_redirect', { trigger: 'upsell_banner' });
+                            router.push({ pathname: '/paywall', params: { trigger: 'upsell_banner' } });
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="star" size={14} color="#FFDF00" />
+                          <Text style={styles.upsellBannerText}>
+                            {freeRemaining === 0 && scanCredits <= 0
+                              ? 'No scans left — Upgrade or buy a scan'
+                              : '1 free scan left — Upgrade for unlimited'}
+                          </Text>
+                          <Ionicons name="chevron-forward" size={14} color="#FFDF00" />
+                        </TouchableOpacity>
+                      )}
+                    </>
+                  );
+                })()}
                 
                 <TouchableOpacity
                   style={styles.manualInputButton}
@@ -970,6 +1009,25 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     marginLeft: 6,
+  },
+  upsellBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 223, 0, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 223, 0, 0.5)',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    marginBottom: 15,
+  },
+  upsellBannerText: {
+    color: '#FFDF00',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+    textAlign: 'center',
+    marginHorizontal: 6,
   },
   manualInputButton: {
     paddingVertical: 12,

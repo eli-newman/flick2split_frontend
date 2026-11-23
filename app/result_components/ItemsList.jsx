@@ -27,6 +27,81 @@ export const ItemsList = ({
   // Track confirmation state
   const [confirmationState, setConfirmationState] = useState(0); // 0: not started, 1: first press, 2: confirmed
   const [confirmButtonTimer, setConfirmButtonTimer] = useState(null);
+
+  // Per-row edit validation. Maps row index -> { price?: string, quantity?: string }
+  const [rowErrors, setRowErrors] = useState({});
+  // Snapshots of the original value when an edit begins, so we can revert on invalid commit
+  const [originalPrice, setOriginalPrice] = useState({});
+  const [originalQuantity, setOriginalQuantity] = useState({});
+
+  const setRowError = (index, field, message) => {
+    setRowErrors(prev => {
+      const next = { ...prev };
+      const row = { ...(next[index] || {}) };
+      if (message) {
+        row[field] = message;
+      } else {
+        delete row[field];
+      }
+      if (Object.keys(row).length === 0) {
+        delete next[index];
+      } else {
+        next[index] = row;
+      }
+      return next;
+    });
+  };
+
+  const commitPriceEdit = (index, rawText) => {
+    const text = (rawText ?? '').toString().trim();
+    if (text === '' || isNaN(text)) {
+      setRowError(index, 'price', 'Enter a valid price');
+      // Revert to original
+      const prev = originalPrice[index];
+      const updatedItems = [...bill.items];
+      updatedItems[index] = { ...updatedItems[index], price: prev ?? updatedItems[index].price };
+      setBill(b => ({ ...b, items: updatedItems }));
+      setEditingItem(null);
+      return;
+    }
+    const value = parseFloat(text);
+    if (Number.isNaN(value) || value <= 0) {
+      setRowError(index, 'price', 'Price must be greater than 0');
+      const prev = originalPrice[index];
+      const updatedItems = [...bill.items];
+      updatedItems[index] = { ...updatedItems[index], price: prev ?? updatedItems[index].price };
+      setBill(b => ({ ...b, items: updatedItems }));
+      setEditingItem(null);
+      return;
+    }
+    setRowError(index, 'price', '');
+    updateItemPrice(index, text);
+  };
+
+  const commitQuantityEdit = (index, rawText) => {
+    const text = (rawText ?? '').toString().trim();
+    if (text === '' || !/^\d+$/.test(text)) {
+      setRowError(index, 'quantity', 'Enter a whole number');
+      const prev = originalQuantity[index];
+      const updatedItems = [...bill.items];
+      updatedItems[index] = { ...updatedItems[index], quantity: prev ?? updatedItems[index].quantity };
+      setBill(b => ({ ...b, items: updatedItems }));
+      setEditingQuantity(null);
+      return;
+    }
+    const value = parseInt(text, 10);
+    if (Number.isNaN(value) || value < 1) {
+      setRowError(index, 'quantity', 'Must be at least 1');
+      const prev = originalQuantity[index];
+      const updatedItems = [...bill.items];
+      updatedItems[index] = { ...updatedItems[index], quantity: prev ?? updatedItems[index].quantity };
+      setBill(b => ({ ...b, items: updatedItems }));
+      setEditingQuantity(null);
+      return;
+    }
+    setRowError(index, 'quantity', '');
+    updateItemQuantity(index, text);
+  };
   
   // Add validation before confirming items
   const validateAndConfirmItems = () => {
@@ -65,27 +140,12 @@ export const ItemsList = ({
       return;
     }
 
-    // Handle the double-confirmation
-    if (confirmationState === 0) {
-      // First press - show confirmation prompt
-      setConfirmationState(1);
-      
-      // Reset confirmation state after 2 seconds if not confirmed
-      const timer = setTimeout(() => {
-        setConfirmationState(0);
-      }, 2000);
-      setConfirmButtonTimer(timer);
-      
-      return;
-    }
-    
-    // Clear any existing timer
+    // Clear any pending reset timer from a previous interaction
     if (confirmButtonTimer) {
       clearTimeout(confirmButtonTimer);
       setConfirmButtonTimer(null);
     }
-    
-    // Second press - proceed with confirmation
+
     setConfirmationState(2);
 
     // Format all prices before confirming
@@ -163,102 +223,119 @@ export const ItemsList = ({
         </View>
         
         {bill.items.map((item, index) => (
-          <View key={index} style={styles.itemRow}>
-            <View style={styles.nameWrapper}>
-              {editingName === index ? (
-                <TextInput
-                  style={styles.nameInput}
-                  value={item.name}
-                  autoFocus
-                  selectTextOnFocus={true}
-                  onChangeText={(text) => {
-                    const updatedItems = [...bill.items];
-                    updatedItems[index] = {
-                      ...updatedItems[index],
-                      name: text
-                    };
-                    setBill(prev => ({...prev, items: updatedItems}));
-                  }}
-                  onBlur={(e) => updateItemName(index, e.nativeEvent.text || "Item")}
-                  onSubmitEditing={() => updateItemName(index, bill.items[index].name || "Item")}
-                />
-              ) : (
-                <TouchableOpacity 
-                  style={styles.nameContainer}
-                  onPress={() => !itemsConfirmed && setEditingName(index)}
+          <View key={index}>
+            <View style={styles.itemRow}>
+              <View style={styles.nameWrapper}>
+                {editingName === index ? (
+                  <TextInput
+                    style={styles.nameInput}
+                    value={item.name}
+                    autoFocus
+                    selectTextOnFocus={true}
+                    onChangeText={(text) => {
+                      const updatedItems = [...bill.items];
+                      updatedItems[index] = {
+                        ...updatedItems[index],
+                        name: text
+                      };
+                      setBill(prev => ({...prev, items: updatedItems}));
+                    }}
+                    onBlur={(e) => updateItemName(index, e.nativeEvent.text || "Item")}
+                    onSubmitEditing={() => updateItemName(index, bill.items[index].name || "Item")}
+                  />
+                ) : (
+                  <TouchableOpacity
+                    style={styles.nameContainer}
+                    onPress={() => !itemsConfirmed && setEditingName(index)}
+                  >
+                    <Text style={styles.itemName}>{item.name}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <View style={styles.quantityWrapper}>
+                {editingQuantity === index ? (
+                  <TextInput
+                    style={styles.quantityInput}
+                    value={item.quantity?.toString()}
+                    keyboardType="numeric"
+                    autoFocus
+                    onChangeText={(text) => {
+                      if (rowErrors[index]?.quantity) setRowError(index, 'quantity', '');
+                      const updatedItems = [...bill.items];
+                      updatedItems[index] = {
+                        ...updatedItems[index],
+                        quantity: text
+                      };
+                      setBill(prev => ({...prev, items: updatedItems}));
+                    }}
+                    onBlur={(e) => commitQuantityEdit(index, e.nativeEvent.text)}
+                    onSubmitEditing={() => commitQuantityEdit(index, bill.items[index].quantity)}
+                  />
+                ) : (
+                  <TouchableOpacity
+                    style={styles.quantityContainer}
+                    onPress={() => {
+                      if (itemsConfirmed) return;
+                      setOriginalQuantity(prev => ({ ...prev, [index]: bill.items[index].quantity }));
+                      setEditingQuantity(index);
+                    }}
+                  >
+                    <Text style={styles.itemQuantity}>{item.quantity || 1}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <View style={styles.priceWrapper}>
+                {editingItem === index ? (
+                  <TextInput
+                    style={styles.priceInput}
+                    value={item.price === 0 || item.price === "0" ? "" : item.price?.toString()}
+                    placeholder="0"
+                    placeholderTextColor="#aaa"
+                    keyboardType="numeric"
+                    autoFocus
+                    onChangeText={(text) => {
+                      if (rowErrors[index]?.price) setRowError(index, 'price', '');
+                      // Remove leading zeros
+                      const cleanedText = text.replace(/^0+(?=\d)/, '');
+                      const updatedItems = [...bill.items];
+                      updatedItems[index] = {
+                        ...updatedItems[index],
+                        price: cleanedText
+                      };
+                      setBill(prev => ({...prev, items: updatedItems}));
+                    }}
+                    onBlur={(e) => commitPriceEdit(index, e.nativeEvent.text)}
+                    onSubmitEditing={() => commitPriceEdit(index, bill.items[index].price)}
+                  />
+                ) : (
+                  <TouchableOpacity
+                    style={styles.priceContainer}
+                    onPress={() => {
+                      if (itemsConfirmed) return;
+                      setOriginalPrice(prev => ({ ...prev, [index]: bill.items[index].price }));
+                      setEditingItem(index);
+                    }}
+                  >
+                    <Text style={styles.itemPrice}>{formatCurrency(item.price)}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {!itemsConfirmed && (
+                <TouchableOpacity
+                  style={styles.trashButton}
+                  onPress={() => removeItem(index)}
                 >
-                  <Text style={styles.itemName}>{item.name}</Text>
+                  <Ionicons name="trash-outline" size={16} color="#ff5c5c" />
                 </TouchableOpacity>
               )}
             </View>
-            
-            <View style={styles.quantityWrapper}>
-              {editingQuantity === index ? (
-                <TextInput
-                  style={styles.quantityInput}
-                  value={item.quantity?.toString()}
-                  keyboardType="numeric"
-                  autoFocus
-                  onChangeText={(text) => {
-                    const updatedItems = [...bill.items];
-                    updatedItems[index] = {
-                      ...updatedItems[index],
-                      quantity: text
-                    };
-                    setBill(prev => ({...prev, items: updatedItems}));
-                  }}
-                  onBlur={(e) => updateItemQuantity(index, e.nativeEvent.text)}
-                  onSubmitEditing={() => updateItemQuantity(index, bill.items[index].quantity)}
-                />
-              ) : (
-                <TouchableOpacity 
-                  style={styles.quantityContainer}
-                  onPress={() => !itemsConfirmed && setEditingQuantity(index)}
-                >
-                  <Text style={styles.itemQuantity}>{item.quantity || 1}</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            
-            <View style={styles.priceWrapper}>
-              {editingItem === index ? (
-                <TextInput
-                  style={styles.priceInput}
-                  value={item.price === 0 || item.price === "0" ? "" : item.price?.toString()}
-                  placeholder="0"
-                  placeholderTextColor="#aaa"
-                  keyboardType="numeric"
-                  autoFocus
-                  onChangeText={(text) => {
-                    // Remove leading zeros
-                    const cleanedText = text.replace(/^0+(?=\d)/, '');
-                    const updatedItems = [...bill.items];
-                    updatedItems[index] = {
-                      ...updatedItems[index],
-                      price: cleanedText
-                    };
-                    setBill(prev => ({...prev, items: updatedItems}));
-                  }}
-                  onBlur={(e) => updateItemPrice(index, e.nativeEvent.text)}
-                  onSubmitEditing={() => updateItemPrice(index, bill.items[index].price)}
-                />
-              ) : (
-                <TouchableOpacity 
-                  style={styles.priceContainer}
-                  onPress={() => !itemsConfirmed && setEditingItem(index)}
-                >
-                  <Text style={styles.itemPrice}>{formatCurrency(item.price)}</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            
-            {!itemsConfirmed && (
-              <TouchableOpacity 
-                style={styles.trashButton}
-                onPress={() => removeItem(index)}
-              >
-                <Ionicons name="trash-outline" size={16} color="#ff5c5c" />
-              </TouchableOpacity>
+            {(rowErrors[index]?.price || rowErrors[index]?.quantity) && (
+              <Text style={styles.rowErrorText}>
+                {rowErrors[index]?.price || rowErrors[index]?.quantity}
+              </Text>
             )}
           </View>
         ))}
@@ -535,5 +612,13 @@ const styles = StyleSheet.create({
   },
   editButtonIcon: {
     marginRight: 6,
+  },
+  rowErrorText: {
+    color: '#ff5c5c',
+    fontSize: 12,
+    fontWeight: '500',
+    marginLeft: 16,
+    marginTop: 2,
+    marginBottom: 4,
   },
 }); 

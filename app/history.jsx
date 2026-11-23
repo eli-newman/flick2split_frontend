@@ -15,30 +15,49 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { collection, query, orderBy, getDocs } from 'firebase/firestore';
 import { db } from './config/firebase';
 import { useAuth } from './config/AuthContext';
+import { currencies } from './utils/currencies';
+import { logEvent } from './utils/analytics';
 
 export default function History() {
   const router = useRouter();
   const { user } = useAuth();
-  const [scans, setScans] = useState([]);
+  const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expandedScan, setExpandedScan] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     if (!user) return;
+    logEvent(user.uid, 'history_opened');
 
     (async () => {
       try {
-        const scansRef = collection(db, 'users', user.uid, 'scans');
-        const q = query(scansRef, orderBy('createdAt', 'desc'));
-        const snapshot = await getDocs(q);
-        const scanList = snapshot.docs.map(doc => ({
-          id: doc.id,
+        const [scansSnap, splitsSnap] = await Promise.all([
+          getDocs(query(collection(db, 'users', user.uid, 'scans'), orderBy('createdAt', 'desc'))),
+          getDocs(query(collection(db, 'users', user.uid, 'splits'), orderBy('createdAt', 'desc'))),
+        ]);
+
+        const scans = scansSnap.docs.map(doc => ({
+          id: `scan-${doc.id}`,
+          type: 'scan',
           ...doc.data(),
         }));
-        setScans(scanList);
+        const splits = splitsSnap.docs.map(doc => ({
+          id: `split-${doc.id}`,
+          type: 'split',
+          ...doc.data(),
+        }));
+
+        // Merge and sort newest first
+        const merged = [...scans, ...splits].sort((a, b) => {
+          const aTime = a.createdAt?.toDate?.() ?? new Date(0);
+          const bTime = b.createdAt?.toDate?.() ?? new Date(0);
+          return bTime - aTime;
+        });
+
+        setItems(merged);
       } catch (e) {
-        console.error('Error fetching scans:', e);
+        console.error('Error fetching history:', e);
         const msg = e.message || '';
         if (msg.includes('network') || msg.includes('Network') || msg.includes('fetch') || e.code === 'unavailable') {
           setError('offline');
@@ -70,26 +89,34 @@ export default function History() {
     });
   };
 
-  const renderScan = ({ item }) => {
+  const getCurrencySymbol = (code) => {
+    const currency = currencies && currencies.find(c => c.code === code);
+    return currency ? currency.symbol : '$';
+  };
+
+  const renderScanCard = (item) => {
     const bill = item.bill || {};
-    const isExpanded = expandedScan === item.id;
+    const isExpanded = expandedId === item.id;
+    const sym = getCurrencySymbol(bill.currency);
 
     return (
       <TouchableOpacity
         style={styles.scanCard}
-        onPress={() => setExpandedScan(isExpanded ? null : item.id)}
+        onPress={() => setExpandedId(isExpanded ? null : item.id)}
         activeOpacity={0.7}
       >
         <View style={styles.scanHeader}>
           <View style={styles.scanHeaderLeft}>
-            <Text style={styles.restaurantName} numberOfLines={1}>
-              {bill.restaurant || 'Unknown Restaurant'}
-            </Text>
+            <View style={styles.scanTitleRow}>
+              <Text style={styles.restaurantName} numberOfLines={1}>
+                {bill.restaurant || 'Unknown Restaurant'}
+              </Text>
+            </View>
             <Text style={styles.scanDate}>{formatDate(item.createdAt)}</Text>
           </View>
           <View style={styles.scanHeaderRight}>
             <Text style={styles.scanTotal}>
-              ${(bill.total || 0).toFixed(2)}
+              {sym}{(bill.total || 0).toFixed(2)}
             </Text>
             <Ionicons
               name={isExpanded ? 'chevron-up' : 'chevron-down'}
@@ -106,13 +133,13 @@ export default function History() {
             {bill.items && bill.items.length > 0 && (
               <>
                 <Text style={styles.detailLabel}>Items</Text>
-                {bill.items.map((item, idx) => (
+                {bill.items.map((itm, idx) => (
                   <View key={idx} style={styles.itemRow}>
                     <Text style={styles.itemName} numberOfLines={1}>
-                      {item.name}
+                      {itm.name}
                     </Text>
                     <Text style={styles.itemPrice}>
-                      ${(item.price || 0).toFixed(2)}
+                      {sym}{(itm.price || 0).toFixed(2)}
                     </Text>
                   </View>
                 ))}
@@ -124,19 +151,19 @@ export default function History() {
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Subtotal</Text>
               <Text style={styles.summaryValue}>
-                ${(bill.subtotal || 0).toFixed(2)}
+                {sym}{(bill.subtotal || 0).toFixed(2)}
               </Text>
             </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Tax</Text>
               <Text style={styles.summaryValue}>
-                ${(bill.tax || 0).toFixed(2)}
+                {sym}{(bill.tax || 0).toFixed(2)}
               </Text>
             </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabelBold}>Total</Text>
               <Text style={styles.summaryValueBold}>
-                ${(bill.total || 0).toFixed(2)}
+                {sym}{(bill.total || 0).toFixed(2)}
               </Text>
             </View>
 
@@ -153,6 +180,81 @@ export default function History() {
       </TouchableOpacity>
     );
   };
+
+  const renderSplitCard = (item) => {
+    const bill = item.bill || {};
+    const guests = item.guests || [];
+    const isExpanded = expandedId === item.id;
+    const sym = getCurrencySymbol(bill.currency);
+
+    return (
+      <TouchableOpacity
+        style={[styles.scanCard, styles.splitCard]}
+        onPress={() => setExpandedId(isExpanded ? null : item.id)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.scanHeader}>
+          <View style={styles.scanHeaderLeft}>
+            <View style={styles.scanTitleRow}>
+              <View style={styles.splitBadge}>
+                <Text style={styles.splitBadgeText}>Split</Text>
+              </View>
+              <Text style={styles.restaurantName} numberOfLines={1}>
+                {bill.restaurant || 'Unknown Restaurant'}
+              </Text>
+            </View>
+            <Text style={styles.scanDate}>
+              {formatDate(item.createdAt)} · {guests.length} {guests.length === 1 ? 'guest' : 'guests'}
+            </Text>
+          </View>
+          <View style={styles.scanHeaderRight}>
+            <Text style={styles.scanTotal}>
+              {sym}{(bill.total || 0).toFixed(2)}
+            </Text>
+            <Ionicons
+              name={isExpanded ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color="#999"
+            />
+          </View>
+        </View>
+
+        {isExpanded && (
+          <View style={styles.scanDetails}>
+            <View style={styles.divider} />
+            <Text style={styles.detailLabel}>Who paid what</Text>
+            {guests.map((guest, idx) => (
+              <View key={idx} style={styles.guestBlock}>
+                <View style={styles.guestHeaderRow}>
+                  <Text style={styles.guestName}>{guest.name}</Text>
+                  <Text style={styles.guestTotal}>
+                    {sym}{(guest.total || 0).toFixed(2)}
+                  </Text>
+                </View>
+                {guest.items && guest.items.map((itm, iidx) => (
+                  <View key={iidx} style={styles.guestItemRow}>
+                    <Text style={styles.guestItemName} numberOfLines={1}>
+                      {itm.name}
+                    </Text>
+                    <Text style={styles.guestItemPrice}>
+                      {sym}{(itm.price || 0).toFixed(2)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ))}
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  const renderItem = ({ item }) => {
+    if (item.type === 'split') return renderSplitCard(item);
+    return renderScanCard(item);
+  };
+
+  const hasSomeHistory = items.length > 0;
 
   return (
     <>
@@ -173,7 +275,7 @@ export default function History() {
             >
               <Ionicons name="arrow-back" size={24} color="white" />
             </TouchableOpacity>
-            <Text style={styles.title}>Past Receipts</Text>
+            <Text style={styles.title}>History</Text>
             <View style={styles.placeholder} />
           </View>
 
@@ -193,22 +295,22 @@ export default function History() {
               </Text>
               <Text style={styles.emptySubtext}>
                 {error === 'offline'
-                  ? 'Connect to the internet to view your past receipts.'
-                  : 'Unable to load your receipts. Please try again later.'}
+                  ? 'Connect to the internet to view your history.'
+                  : 'Unable to load your history. Please try again later.'}
               </Text>
             </View>
-          ) : scans.length === 0 ? (
+          ) : !hasSomeHistory ? (
             <View style={styles.centered}>
               <Ionicons name="receipt-outline" size={64} color="rgba(255,255,255,0.4)" />
-              <Text style={styles.emptyText}>No receipts yet</Text>
+              <Text style={styles.emptyText}>No history yet</Text>
               <Text style={styles.emptySubtext}>
                 Scan a receipt to see it here
               </Text>
             </View>
           ) : (
             <FlatList
-              data={scans}
-              renderItem={renderScan}
+              data={items}
+              renderItem={renderItem}
               keyExtractor={(item) => item.id}
               contentContainerStyle={styles.listContent}
               showsVerticalScrollIndicator={false}
@@ -281,6 +383,10 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
+  splitCard: {
+    borderLeftWidth: 3,
+    borderLeftColor: '#4CDE80',
+  },
   scanHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -290,6 +396,26 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 12,
   },
+  scanTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  splitBadge: {
+    backgroundColor: 'rgba(76, 222, 128, 0.15)',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(76, 222, 128, 0.4)',
+  },
+  splitBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2a9a50',
+    textTransform: 'uppercase',
+  },
   scanHeaderRight: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -298,6 +424,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#333',
+    flexShrink: 1,
   },
   scanDate: {
     fontSize: 13,
@@ -377,5 +504,42 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 14,
     marginLeft: 6,
+  },
+  // Split card guest breakdown
+  guestBlock: {
+    marginBottom: 12,
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    padding: 10,
+  },
+  guestHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  guestName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#333',
+  },
+  guestTotal: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#3442C6',
+  },
+  guestItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+  },
+  guestItemName: {
+    fontSize: 13,
+    color: '#666',
+    flex: 1,
+    marginRight: 8,
+  },
+  guestItemPrice: {
+    fontSize: 13,
+    color: '#666',
   },
 });
